@@ -2,6 +2,7 @@ import os
 import shutil
 
 import numpy as np
+from scipy.optimize import least_squares
 from scipy import stats
 import astropy.units as u
 import astropy.constants as const
@@ -10,8 +11,11 @@ from astropy.table import Table, hstack, vstack
 from specutils import Spectrum1D
 import emcee
 import multiprocessing as mp
+from tqdm import tqdm
+
 import paintbox as pb
 from paintbox.utils import CvD18, disp2vel
+import matplotlib.pyplot as plt
 
 import context
 
@@ -66,7 +70,7 @@ def make_paintbox_model(wave, V=0, sigma=100, dlam=100):
     degree = np.ceil((wave.max() - wave.min()) / dlam).astype(int)
     sed = (pb.Resample(wave, ssp_kin) + pb.Resample(wave, em_kin)) * \
            pb.Polynomial(wave, degree=degree)
-    return sed, cvd.limits
+    return sed, cvd.limits, degree
 
 def set_priors(parnames, limits, vsyst):
     """ Defining prior distributions for the model. """
@@ -94,7 +98,7 @@ def set_priors(parnames, limits, vsyst):
                 a, b = (0 - mu) / sd, (np.infty - mu) / sd
                 priors[parname] = stats.truncnorm(a, b, mu, sd)
             else:
-                priors[parname] = stats.norm(0, 0.05)
+                priors[parname] = stats.norm(0, .5)
         else:
             raise ValueError(f"parameter without prior: {parname}")
     return priors
@@ -121,6 +125,10 @@ def run_sampler(outdb, nsteps=5000):
     for i, param in enumerate(logp.parnames):
         logpdf.append(priors[param].logpdf)
         pos[:, i] = priors[param].rvs(nwalkers)
+    # for n in range(nwalkers):
+    #     plt.plot(logp.wave, logp.model(pos[n,:-1]), c="0.8")
+    #     plt.plot(logp.wave, logp.observed)
+    #     plt.show()
     backend = emcee.backends.HDFBackend(outdb)
     backend.reset(nwalkers, ndim)
     try:
@@ -153,6 +161,45 @@ def make_table(trace, outtab):
     tab.write(outtab, overwrite=True)
     return tab
 
+def plot_fitting(wave, flux, mask, sed, trace, output, fluxerr=None):
+    fig, axs = plt.subplots(2, 1, gridspec_kw={'height_ratios': [2, 1]},
+                            figsize=(2 * context.fig_width, 3))
+    t = np.array([trace[p].data for p in sed.parnames]).T
+    n = len(t)
+    models = np.zeros((n, len(wave)))
+    y = np.percentile(models, 50, axis=(0,))
+    for j in tqdm(range(len(trace)), desc="Generating models "
+                                                     "for trace"):
+        models[j] = sed(t[j])
+    y = np.percentile(models, 50, axis=(0,))
+    ax0 = fig.add_subplot(axs[0])
+    if fluxerr is not None:
+        ax0.plot(wave, flux, fmt="-", ecolor="0.8", c="tab:blue")
+    else:
+        ax0.errorbar(wave, flux, yerr=fluxerr, fmt="-",
+                     ecolor="0.8", c="tab:blue")
+    ax0.plot(wave, y, c="tab:orange")
+    ax0.xaxis.set_ticklabels([])
+    ax0.set_ylabel("Flux")
+    ax1 = fig.add_subplot(axs[1])
+    if fluxerr is None:
+        ax1.plot(wave, 100 * (flux - y) / flux, "-", c="tab:blue")
+    else:
+        ax1.errorbar(wave, 100 * (flux - y) / flux,
+                     yerr=100 * fluxerr, fmt="-", ecolor="0.8", c="tab:blue")
+    ax1.plot(wave, 100 * (flux - y) / flux, c="tab:orange")
+    ax1.set_ylabel("Res. (\%)")
+    ax1.set_xlabel("$\lambda$ (Angstrom)")
+    ax1.set_ylim(-5, 5)
+    ax1.axhline(y=0, ls="--", c="k")
+    plt.tight_layout()
+    plt.savefig(output, dpi=300)
+    plt.show()
+    plt.clf()
+    plt.show()
+    plt.close(fig)
+    return
+
 def run_paintbox(galaxy, nsteps=5000, loglike="normal2", sigma=100, z=0):
     """ Run paintbox. """
     global logp, priors
@@ -162,12 +209,14 @@ def run_paintbox(galaxy, nsteps=5000, loglike="normal2", sigma=100, z=0):
     V0 = c * ((z+1)**2 - 1) / ((z+1)**2 + 1)
     # Loading data
     wave, flux, mask = load_data(galaxy)
+    fluxerr = np.ones(len(flux))
     flux /= np.median(flux) # Normalize input spectrum
     # Make paintbox model
-    sed, limits = make_paintbox_model(wave, V=V0, sigma=sigma)
+    sed, limits, porder = make_paintbox_model(wave, V=V0, sigma=sigma)
     logp = pb.Normal2LogLike(flux, sed, mask=mask)
     # Making priors
     priors = set_priors(logp.parnames, limits, vsyst={"V": V0})
+
     # Perform fitting
     dbname = f"{galaxy}_{loglike}_nsteps{nsteps}.h5"
     # Run in any directory outside Dropbox to avoid problems
@@ -184,6 +233,8 @@ def run_paintbox(galaxy, nsteps=5000, loglike="normal2", sigma=100, z=0):
     trace = Table(tracedata, names=logp.parnames)
     outtab = os.path.join(outdb.replace(".h5", "_results.fits"))
     make_table(trace, outtab)
+    outimg = outdb.replace(".h5", "_fit.png")
+    plot_fitting(wave, flux, mask, sed, trace, outimg)
 
 if __name__ == "__main__":
     sample = os.listdir(context.data_dir)
