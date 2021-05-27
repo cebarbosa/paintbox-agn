@@ -32,14 +32,15 @@ def load_data(galaxy):
     flux = spec1d.flux
     return wave, flux, mask
 
-def make_paintbox_model(wave, V=0, sigma=100, dlam=100):
+def make_paintbox_model(wave, sigma=100, dlam=1000):
     """ Build a paintbox model with stars, gas, polynomials terms, etc. """
     # Using velocity of galaxy to set wavelength of models
-    c = const.c.to("km/s").value
-    Vmin = V - 2000
-    wmin = wave[0] * np.sqrt((1 + Vmin/c)/(1 - Vmin/c)) - 100
-    wmax = wave[-1] + 100
-    wtemp = disp2vel([wmin, wmax], 50)
+    # c = const.c.to("km/s").value
+    # Vmin = V - 2000
+    # wmin = wave[0] * np.sqrt((1 + Vmin/c)/(1 - Vmin/c)) - 100
+    # wmax = wave[-1] + 100
+    wrange = [19000, 24000]
+    wtemp = disp2vel(wrange, 50)
     # Preparing stellar population models
     templates_dir = os.path.join(context.home_dir, "templates")
     if not os.path.exists(templates_dir):
@@ -53,26 +54,27 @@ def make_paintbox_model(wave, V=0, sigma=100, dlam=100):
     krpa_imf2 = 2.3
     ssp_krpa = pb.FixParams(cvd, {"x1": krpa_imf1, "x2": krpa_imf2})
     ssp_kin = pb.LOSVDConv(ssp_krpa, losvdpars=["V_star", "sigma_star"])
-    # Emission lines
+    sed = pb.Resample(wave, ssp_kin)
+           # Emission lines
     linenames = ["SiVI", "HBrgama1", "CaVIII"]
-    linenames = [f"em_{_}" for _ in linenames]
     linewaves = np.array([1.964, 2.166, 2.321]) * u.micrometer
     linewaves = linewaves.to(u.Angstrom).value
     velscale_em = 30
-    wave_em = disp2vel([wmin, wmax], velscale_em)
-    emission = np.zeros((len(linenames), len(wave_em)))
-    for i in range(len(linenames)):
-        emission[i]= Gaussian1D(amplitude=1, mean=linewaves[i],
+    wave_em = disp2vel(wrange, velscale_em)
+    for linename, linewave in zip(linenames, linewaves):
+
+        emission = Gaussian1D(amplitude=1, mean=linewave,
                        stddev=sigma/velscale_em)(wave_em)
-    em = pb.NonParametricModel(wave_em, emission, names=linenames)
-    em_kin = pb.LOSVDConv(em, losvdpars=["V_gas", "sigma_gas"])
-    # Make paintbox model
+        em = pb.NonParametricModel(wave_em, emission, names=[f"em_{linename}"])
+        em_kin = pb.LOSVDConv(em, losvdpars=[f"V_{linename}", f"sigma_"
+                                                              f"{linename}"])
+        sed += pb.Resample(wave, em_kin)
+    # Include polynomial
     degree = np.ceil((wave.max() - wave.min()) / dlam).astype(int)
-    sed = (pb.Resample(wave, ssp_kin) + pb.Resample(wave, em_kin)) * \
-           pb.Polynomial(wave, degree=degree)
+    sed *= pb.Polynomial(wave, degree=degree)
     return sed, cvd.limits, degree
 
-def set_priors(parnames, limits, vsyst):
+def set_priors(parnames, limits):
     """ Defining prior distributions for the model. """
     priors = {}
     for parname in parnames:
@@ -81,8 +83,8 @@ def set_priors(parnames, limits, vsyst):
             vmin, vmax = limits[name]
             delta = vmax - vmin
             priors[parname] = stats.uniform(loc=vmin, scale=delta)
-        elif name in vsyst:
-            priors[parname] = stats.norm(loc=vsyst[name], scale=500)
+        elif name == "V":
+            priors[parname] = stats.norm(loc=0, scale=300)
         elif parname == "eta":
             priors["eta"] = stats.uniform(loc=1., scale=19)
         elif parname == "nu":
@@ -94,11 +96,14 @@ def set_priors(parnames, limits, vsyst):
         elif name == "p":
             porder = int(parname.split("_")[1])
             if porder == 0:
-                mu, sd = 1, 1
+                mu, sd = 1, 0.2
                 a, b = (0 - mu) / sd, (np.infty - mu) / sd
                 priors[parname] = stats.truncnorm(a, b, mu, sd)
+                # priors[parname] = stats.uniform(0., 1.)
+            elif porder == 1:
+                priors[parname] = stats.norm(.1, .5)
             else:
-                priors[parname] = stats.norm(0, .5)
+                priors[parname] = stats.norm(0, .1)
         else:
             raise ValueError(f"parameter without prior: {parname}")
     return priors
@@ -127,8 +132,8 @@ def run_sampler(outdb, nsteps=5000):
         pos[:, i] = priors[param].rvs(nwalkers)
     # for n in range(nwalkers):
     #     plt.plot(logp.wave, logp.model(pos[n,:-1]), c="0.8")
-    #     plt.plot(logp.wave, logp.observed)
-    #     plt.show()
+    # plt.plot(logp.wave, logp.observed)
+    plt.show()
     backend = emcee.backends.HDFBackend(outdb)
     backend.reset(nwalkers, ndim)
     try:
@@ -212,10 +217,10 @@ def run_paintbox(galaxy, nsteps=5000, loglike="normal2", sigma=100, z=0):
     fluxerr = np.ones(len(flux))
     flux /= np.median(flux) # Normalize input spectrum
     # Make paintbox model
-    sed, limits, porder = make_paintbox_model(wave, V=V0, sigma=sigma)
+    sed, limits, porder = make_paintbox_model(wave, sigma=sigma)
     logp = pb.Normal2LogLike(flux, sed, mask=mask)
     # Making priors
-    priors = set_priors(logp.parnames, limits, vsyst={"V": V0})
+    priors = set_priors(logp.parnames, limits)
 
     # Perform fitting
     dbname = f"{galaxy}_{loglike}_nsteps{nsteps}.h5"
@@ -238,7 +243,7 @@ def run_paintbox(galaxy, nsteps=5000, loglike="normal2", sigma=100, z=0):
 
 if __name__ == "__main__":
     sample = os.listdir(context.data_dir)
-    z = {"NGC4151": 0.003319}
+    z = {"NGC4151": 0}
     for galaxy in sample:
         print(f"Processing galaxy {galaxy}")
         run_paintbox(galaxy, z=z[galaxy])
