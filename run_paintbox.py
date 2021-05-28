@@ -220,7 +220,7 @@ def run_paintbox(galaxy, nsteps=5000, loglike="studt2", sigma=100, z=0):
     fluxerr = flux / sn
     # Make paintbox model
     sed, limits, porder = make_paintbox_model(wave, sigma=sigma)
-    logp = pb.Normal2LogLike(flux, sed, mask=mask, fluxerr=fluxerr)
+    logp = pb.Normal2LogLike(flux, sed, mask=mask, obserr=fluxerr)
     # Making priors
     priors = set_priors(logp.parnames, limits)
 
