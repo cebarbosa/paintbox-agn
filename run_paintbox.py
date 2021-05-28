@@ -220,7 +220,10 @@ def run_paintbox(galaxy, nsteps=5000, loglike="studt2", sigma=100, z=0):
     fluxerr = flux / sn
     # Make paintbox model
     sed, limits, porder = make_paintbox_model(wave, sigma=sigma)
-    logp = pb.Normal2LogLike(flux, sed, mask=mask, obserr=fluxerr)
+    if loglike == "normal2":
+        logp = pb.Normal2LogLike(flux, sed, mask=mask, obserr=fluxerr)
+    elif loglike == "studt2":
+        logp = pb.StudT2LogLike(flux, sed, mask=mask, obserr=fluxerr)
     # Making priors
     priors = set_priors(logp.parnames, limits)
 
@@ -240,7 +243,7 @@ def run_paintbox(galaxy, nsteps=5000, loglike="studt2", sigma=100, z=0):
     trace = Table(tracedata, names=logp.parnames)
     outtab = os.path.join(outdb.replace(".h5", "_results.fits"))
     make_table(trace, outtab)
-    outimg = outdb.replace(".h5", "_fit.png")
+    outimg = outdb.replace(".h5", ".png")
     plot_fitting(wave, flux, mask, sed, trace, outimg)
 
 if __name__ == "__main__":
