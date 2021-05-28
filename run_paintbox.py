@@ -18,6 +18,7 @@ from paintbox.utils import CvD18, disp2vel
 import matplotlib.pyplot as plt
 
 import context
+from der_snr import DER_SNR
 
 def load_data(galaxy):
     specname = f"{galaxy.lower()}_osiris.fits"
@@ -32,7 +33,7 @@ def load_data(galaxy):
     flux = spec1d.flux
     return wave, flux, mask
 
-def make_paintbox_model(wave, sigma=100, dlam=1000):
+def make_paintbox_model(wave, sigma=100, dlam=100):
     """ Build a paintbox model with stars, gas, polynomials terms, etc. """
     # Using velocity of galaxy to set wavelength of models
     # c = const.c.to("km/s").value
@@ -56,8 +57,8 @@ def make_paintbox_model(wave, sigma=100, dlam=1000):
     ssp_kin = pb.LOSVDConv(ssp_krpa, losvdpars=["V_star", "sigma_star"])
     sed = pb.Resample(wave, ssp_kin)
            # Emission lines
-    linenames = ["SiVI", "HBrgama1", "CaVIII"]
-    linewaves = np.array([1.964, 2.166, 2.321]) * u.micrometer
+    linenames = ["SiVI", "HBrgama1", "HBrgama2", "CaVIII"]
+    linewaves = np.array([1.964, 2.166, 2.166, 2.321]) * u.micrometer
     linewaves = linewaves.to(u.Angstrom).value
     velscale_em = 30
     wave_em = disp2vel(wrange, velscale_em)
@@ -205,7 +206,7 @@ def plot_fitting(wave, flux, mask, sed, trace, output, fluxerr=None):
     plt.close(fig)
     return
 
-def run_paintbox(galaxy, nsteps=5000, loglike="normal2", sigma=100, z=0):
+def run_paintbox(galaxy, nsteps=5000, loglike="studt2", sigma=100, z=0):
     """ Run paintbox. """
     global logp, priors
     wdir = os.path.join(context.data_dir, galaxy)
@@ -214,11 +215,12 @@ def run_paintbox(galaxy, nsteps=5000, loglike="normal2", sigma=100, z=0):
     V0 = c * ((z+1)**2 - 1) / ((z+1)**2 + 1)
     # Loading data
     wave, flux, mask = load_data(galaxy)
-    fluxerr = np.ones(len(flux))
     flux /= np.median(flux) # Normalize input spectrum
+    sn = DER_SNR(flux)
+    fluxerr = flux / sn
     # Make paintbox model
     sed, limits, porder = make_paintbox_model(wave, sigma=sigma)
-    logp = pb.Normal2LogLike(flux, sed, mask=mask)
+    logp = pb.Normal2LogLike(flux, sed, mask=mask, fluxerr=fluxerr)
     # Making priors
     priors = set_priors(logp.parnames, limits)
 
