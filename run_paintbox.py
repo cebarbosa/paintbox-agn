@@ -209,7 +209,7 @@ def plot_fitting(wave, flux, mask, sed, trace, output, fluxerr=None):
     plt.close(fig)
     return
 
-def run_paintbox(galaxy, nsteps=5000, loglike="normal", sigma=100, z=0):
+def run_paintbox(galaxy, nsteps=8000, loglike="normal", sigma=100, z=0):
     """ Run paintbox. """
     global logp, priors
     wdir = os.path.join(context.data_dir, galaxy)
