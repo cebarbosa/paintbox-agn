@@ -26,7 +26,7 @@ def load_data(galaxy):
     spec1d = Spectrum1D.read(filename)
     wave = spec1d.spectral_axis.value
     mask = np.full(len(wave), True)
-    windows = [[19881, 20156]]
+    windows = [[19881, 20156], [20450, 20610]]
     for window in windows:
         idx = np.where((wave >= window[0]) & (wave <= window[1]))[0]
         mask[idx] = False
@@ -42,21 +42,26 @@ def make_paintbox_model(wave, sigma=100, dlam=100):
     # wmax = wave[-1] + 100
     wrange = [19000, 24000]
     wtemp = disp2vel(wrange, 50)
-    # Preparing stellar population models
-    templates_dir = os.path.join(context.home_dir, "templates")
-    if not os.path.exists(templates_dir):
-        os.mkdir(templates_dir)
-    store = os.path.join(templates_dir, "CvD18_osiris")
-    elements = []
-    cvd = CvD18(wtemp, store=store, libpath=context.cvd_dir, sigma=sigma,
-                elements=elements)
-    # Fixing slope of IMF to a Kroupa IMF
-    krpa_imf1 = 1.3
-    krpa_imf2 = 2.3
-    ssp_krpa = pb.FixParams(cvd, {"x1": krpa_imf1, "x2": krpa_imf2})
-    ssp_kin = pb.LOSVDConv(ssp_krpa, losvdpars=["V_star", "sigma_star"])
-    sed = pb.Resample(wave, ssp_kin)
-           # Emission lines
+    # # Preparing stellar population models
+    #
+    # templates_dir = os.path.join(context.home_dir, "templates")
+    # if not os.path.exists(templates_dir):
+    #     os.mkdir(templates_dir)
+    # store = os.path.join(templates_dir, "CvD18_osiris")
+    # elements = []
+    # cvd = CvD18(wtemp, store=store, libpath=context.cvd_dir, sigma=sigma,
+    #             elements=elements)
+    # # Fixing slope of IMF to a Kroupa IMF
+    # krpa_imf1 = 1.3
+    # krpa_imf2 = 2.3
+    # ssp_krpa = pb.FixParams(cvd, {"x1": krpa_imf1, "x2": krpa_imf2})
+    # ssp_kin = pb.LOSVDConv(ssp_krpa, losvdpars=["V_star", "sigma_star"])
+    # sed = pb.Resample(wave, ssp_kin)
+    limits = {}
+    # Include polynomial
+    degree = np.ceil((wave.max() - wave.min()) / dlam).astype(int)
+    sed = pb.Polynomial(wave, degree=degree)
+    # Emission lines
     linenames = ["SiVI", "HBrgama1", "HBrgama2", "CaVIII"]
     linewaves = np.array([1.964, 2.166, 2.166, 2.321]) * u.micrometer
     linewaves = linewaves.to(u.Angstrom).value
@@ -70,10 +75,7 @@ def make_paintbox_model(wave, sigma=100, dlam=100):
         em_kin = pb.LOSVDConv(em, losvdpars=[f"V_{linename}", f"sigma_"
                                                               f"{linename}"])
         sed += pb.Resample(wave, em_kin)
-    # Include polynomial
-    degree = np.ceil((wave.max() - wave.min()) / dlam).astype(int)
-    sed *= pb.Polynomial(wave, degree=degree)
-    return sed, cvd.limits, degree
+    return sed, limits, degree
 
 def set_priors(parnames, limits):
     """ Defining prior distributions for the model. """
@@ -206,7 +208,7 @@ def plot_fitting(wave, flux, mask, sed, trace, output, fluxerr=None):
     plt.close(fig)
     return
 
-def run_paintbox(galaxy, nsteps=5000, loglike="studt2", sigma=100, z=0):
+def run_paintbox(galaxy, nsteps=5000, loglike="normal", sigma=100, z=0):
     """ Run paintbox. """
     global logp, priors
     wdir = os.path.join(context.data_dir, galaxy)
@@ -222,6 +224,8 @@ def run_paintbox(galaxy, nsteps=5000, loglike="studt2", sigma=100, z=0):
     sed, limits, porder = make_paintbox_model(wave, sigma=sigma)
     if loglike == "normal2":
         logp = pb.Normal2LogLike(flux, sed, mask=mask, obserr=fluxerr)
+    elif loglike == "normal":
+        logp = pb.NormalLogLike(flux, sed, mask=mask)
     elif loglike == "studt2":
         logp = pb.StudT2LogLike(flux, sed, mask=mask, obserr=fluxerr)
     # Making priors
