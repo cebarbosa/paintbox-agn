@@ -87,26 +87,26 @@ def set_priors(parnames, limits):
             delta = vmax - vmin
             priors[parname] = stats.uniform(loc=vmin, scale=delta)
         elif name == "V":
-            priors[parname] = stats.norm(loc=0, scale=300)
+            priors[parname] = stats.norm(loc=0, scale=800)
         elif parname == "eta":
             priors["eta"] = stats.uniform(loc=1., scale=19)
         elif parname == "nu":
             priors["nu"] = stats.uniform(loc=2, scale=20)
         elif name == "sigma":
-            priors[parname] = stats.uniform(loc=50, scale=300)
+            priors[parname] = stats.halfnorm(loc=25, scale=150)
         elif name == "em":
-            priors[parname] = stats.uniform(loc=0, scale=5)
+            priors[parname] = stats.halfnorm(loc=0, scale=0.2)
         elif name == "p":
             porder = int(parname.split("_")[1])
             if porder == 0:
-                mu, sd = 1, 0.2
+                mu, sd = 1, 0.1
                 a, b = (0 - mu) / sd, (np.infty - mu) / sd
                 priors[parname] = stats.truncnorm(a, b, mu, sd)
                 # priors[parname] = stats.uniform(0., 1.)
             elif porder == 1:
-                priors[parname] = stats.norm(.1, .5)
+                priors[parname] = stats.norm(0, .2)
             else:
-                priors[parname] = stats.norm(0, .1)
+                priors[parname] = stats.norm(0, .05)
         else:
             raise ValueError(f"parameter without prior: {parname}")
     return priors
@@ -134,9 +134,10 @@ def run_sampler(outdb, nsteps=5000):
         logpdf.append(priors[param].logpdf)
         pos[:, i] = priors[param].rvs(nwalkers)
     # for n in range(nwalkers):
-    #     plt.plot(logp.wave, logp.model(pos[n,:-1]), c="0.8")
+    #     plt.plot(logp.wave[logp.mask], logp.model(pos[n])[logp.mask],
+    #              c="0.8")
     # plt.plot(logp.wave, logp.observed)
-    plt.show()
+    # plt.show()
     backend = emcee.backends.HDFBackend(outdb)
     backend.reset(nwalkers, ndim)
     try:
